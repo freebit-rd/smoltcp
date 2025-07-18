@@ -296,6 +296,12 @@ impl<'a> Socket<'a> {
         self.tx_buffer.payload_capacity()
     }
 
+    /// Return the maximum number of bytes inside the transmit buffer.
+    #[inline]
+    pub fn payload_send_contiguous_window(&self) -> usize {
+        self.tx_buffer.payload_contiguous_window()
+    }
+
     /// Enqueue a packet to be sent to a given remote endpoint, and return a pointer
     /// to its payload.
     ///

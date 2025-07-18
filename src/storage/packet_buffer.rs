@@ -244,6 +244,11 @@ impl<'a, H> PacketBuffer<'a, H> {
         self.payload_ring.len()
     }
 
+    /// Return the current number of bytes in the payload ring buffer.
+    pub fn payload_contiguous_window(&self) -> usize {
+        self.payload_ring.contiguous_window()
+    }
+
     /// Reset the packet buffer and clear any staged.
     #[allow(unused)]
     pub(crate) fn reset(&mut self) {
