@@ -149,3 +149,68 @@ impl<'a> SocketSet<'a> {
         self.sockets.iter_mut().filter_map(|x| x.inner.as_mut())
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SocketSetError {
+    /// handle.0 が配列範囲外
+    OutOfBounds,
+    /// スロットは存在するが空
+    Vacant,
+    /// 要求した T と実体の型が異なる
+    WrongType,
+}
+
+impl core::fmt::Display for SocketSetError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            SocketSetError::OutOfBounds => write!(f, "handle is out of bounds"),
+            SocketSetError::Vacant => write!(f, "handle does not refer to a valid socket"),
+            SocketSetError::WrongType => write!(f, "handle refers to a socket of a wrong type"),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for SocketSetError {}
+
+impl<'a> SocketSet<'a> {
+    /// パニックしない版: 参照取得
+    pub fn try_get<T: AnySocket<'a>>(&self, handle: SocketHandle) -> Result<&T, SocketSetError> {
+        let entry = self
+            .sockets
+            .get(handle.0)
+            .ok_or(SocketSetError::OutOfBounds)?;
+
+        let item = entry.inner.as_ref().ok_or(SocketSetError::Vacant)?;
+
+        T::downcast(&item.socket).ok_or(SocketSetError::WrongType)
+    }
+
+    /// パニックしない版: 可変参照取得
+    pub fn try_get_mut<T: AnySocket<'a>>(
+        &mut self,
+        handle: SocketHandle,
+    ) -> Result<&mut T, SocketSetError> {
+        let entry = self
+            .sockets
+            .get_mut(handle.0)
+            .ok_or(SocketSetError::OutOfBounds)?;
+
+        let item = entry.inner.as_mut().ok_or(SocketSetError::Vacant)?;
+
+        T::downcast_mut(&mut item.socket).ok_or(SocketSetError::WrongType)
+    }
+
+    /// パニックしない版: 削除（状態は維持したまま取り出す）
+    pub fn try_remove(&mut self, handle: SocketHandle) -> Result<Socket<'a>, SocketSetError> {
+        net_trace!("[{}]: removing", handle.0);
+
+        let entry = self
+            .sockets
+            .get_mut(handle.0)
+            .ok_or(SocketSetError::OutOfBounds)?;
+
+        let item = entry.inner.take().ok_or(SocketSetError::Vacant)?;
+        Ok(item.socket)
+    }
+}
