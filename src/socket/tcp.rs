@@ -2583,6 +2583,7 @@ impl<'a> Socket<'a> {
         if repr.control == TcpControl::Syn {
             // Fill the MSS option. See RFC 6691 for an explanation of this calculation.
             let max_segment_size = cx.ip_mtu() - ip_repr.header_len() - TCP_HEADER_LEN;
+            tcp_trace!("syn mss={}", max_segment_size);
             repr.max_seg_size = Some(max_segment_size as u16);
         }
 
