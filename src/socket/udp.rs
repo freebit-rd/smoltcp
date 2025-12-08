@@ -593,6 +593,7 @@ impl<'a> Socket<'a> {
             Err(Empty) => Ok(()),
             Ok(Err(e)) => Err(e),
             Ok(Ok(())) => {
+                net_trace!("udp:{}: sent", endpoint);
                 #[cfg(feature = "async")]
                 self.tx_waker.wake();
                 Ok(())
