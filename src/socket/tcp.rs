@@ -2522,7 +2522,14 @@ impl<'a> Socket<'a> {
                     .min(self.remote_mss)
                     .min(cx.ip_mtu() - ip_repr.header_len() - TCP_HEADER_LEN);
 
-                let offset = self.remote_last_seq - self.local_seq_no;
+                let Some(offset) = self.remote_last_seq.checked_sub(self.local_seq_no) else {
+                    tcp_trace!(
+                        "invalid sequence numbers: remote_last_seq={} local_seq_no={}, ignoring",
+                        self.remote_last_seq,
+                        self.local_seq_no
+                    );
+                    return Ok(());
+                };
                 repr.payload = self.tx_buffer.get_allocated(offset, size);
 
                 // If we've sent everything we had in the buffer, follow it with the PSH or FIN
@@ -2564,7 +2571,9 @@ impl<'a> Socket<'a> {
             tcp_trace!(
                 "tx buffer: sending {} octets at offset {}",
                 repr.payload.len(),
-                self.remote_last_seq - self.local_seq_no
+                self.remote_last_seq
+                    .checked_sub(self.local_seq_no)
+                    .unwrap_or_default()
             );
         }
         if repr.control != TcpControl::None || repr.payload.is_empty() {
