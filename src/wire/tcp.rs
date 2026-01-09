@@ -29,6 +29,15 @@ impl SeqNumber {
             rhs
         }
     }
+
+    pub fn checked_sub(self, rhs: Self) -> Option<usize> {
+        let result = self.0.wrapping_sub(rhs.0);
+        if result < 0 {
+            None
+        } else {
+            Some(result as usize)
+        }
+    }
 }
 
 impl fmt::Display for SeqNumber {
