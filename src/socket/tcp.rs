@@ -763,7 +763,28 @@ impl<'a> Socket<'a> {
         let next_ack = self.remote_seq_no + self.rx_buffer.len();
 
         let last_win = (self.remote_last_win as usize) << self.remote_win_shift;
-        let last_win_adjusted = last_ack + last_win - next_ack;
+        let acked_len = match next_ack.checked_sub(last_ack) {
+            Some(value) => value,
+            None => {
+                tcp_trace!(
+                    "invalid window update: last_ack={} next_ack={}, ignoring",
+                    last_ack,
+                    next_ack
+                );
+                return None;
+            }
+        };
+        let last_win_adjusted = match last_win.checked_sub(acked_len) {
+            Some(value) => value,
+            None => {
+                tcp_trace!(
+                    "invalid window update: last_win={} acked_len={}, ignoring",
+                    last_win,
+                    acked_len
+                );
+                return None;
+            }
+        };
 
         Some(u16::try_from(last_win_adjusted >> self.remote_win_shift).unwrap_or(u16::MAX))
     }
