@@ -62,9 +62,15 @@ fn main() {
     let dns_socket = dns::Socket::new(servers, vec![]);
 
     let mut sockets = SocketSet::new(vec![]);
-    let dns_handle = sockets.add(dns_socket);
+    let dns_handle = match sockets.add(dns_socket) {
+        Ok(handle) => handle,
+        Err(_) => return,
+    };
 
-    let socket = sockets.get_mut::<dns::Socket>(dns_handle);
+    let socket = match sockets.get_mut::<dns::Socket>(dns_handle) {
+        Ok(socket) => socket,
+        Err(_) => return,
+    };
     let query = socket
         .start_query(iface.context(), name, DnsQueryType::A)
         .unwrap();

@@ -55,12 +55,15 @@ impl InterfaceInner {
         Tx: TxToken,
         F: FnOnce(EthernetFrame<&mut [u8]>),
     {
+        let src_addr = match self.hardware_addr.ethernet() {
+            Some(addr) => addr,
+            None => return Ok(()),
+        };
         let tx_len = EthernetFrame::<&[u8]>::buffer_len(buffer_len);
         tx_token.consume(tx_len, |tx_buffer| {
             debug_assert!(tx_buffer.as_ref().len() == tx_len);
             let mut frame = EthernetFrame::new_unchecked(tx_buffer);
 
-            let src_addr = self.hardware_addr.ethernet_or_panic();
             frame.set_src_addr(src_addr);
 
             f(frame);

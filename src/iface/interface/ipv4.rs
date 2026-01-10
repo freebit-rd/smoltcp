@@ -295,7 +295,10 @@ impl InterfaceInner {
                 );
 
                 if operation == ArpOperation::Request {
-                    let src_hardware_addr = self.hardware_addr.ethernet_or_panic();
+                    let src_hardware_addr = match self.hardware_addr.ethernet() {
+                        Some(addr) => addr,
+                        None => return None,
+                    };
 
                     Some(EthernetPacket::Arp(ArpRepr::EthernetIpv4 {
                         operation: ArpOperation::Reply,
@@ -430,10 +433,18 @@ impl InterfaceInner {
 
         // Emit function for the Ethernet header.
         #[cfg(feature = "medium-ethernet")]
+        let src_addr = if matches!(caps.medium, Medium::Ethernet) {
+            match self.hardware_addr.ethernet() {
+                Some(addr) => addr,
+                None => return,
+            }
+        } else {
+            EthernetAddress::BROADCAST
+        };
+        #[cfg(feature = "medium-ethernet")]
         let emit_ethernet = |repr: &IpRepr, tx_buffer: &mut [u8]| {
             let mut frame = EthernetFrame::new_unchecked(tx_buffer);
 
-            let src_addr = self.hardware_addr.ethernet_or_panic();
             frame.set_src_addr(src_addr);
             frame.set_dst_addr(frag.ipv4.dst_hardware_addr);
 

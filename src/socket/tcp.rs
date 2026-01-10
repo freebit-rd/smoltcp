@@ -560,16 +560,19 @@ impl<'a> Socket<'a> {
     {
         let (rx_buffer, tx_buffer) = (rx_buffer.into(), tx_buffer.into());
         let rx_capacity = rx_buffer.capacity();
+        let rx_capacity_for_window = if cfg!(target_pointer_width = "16") {
+            rx_capacity
+        } else {
+            rx_capacity.min(1 << 30)
+        };
 
         // From RFC 1323:
         // [...] the above constraints imply that 2 * the max window size must be less
         // than 2**31 [...] Thus, the shift count must be limited to 14 (which allows
         // windows of 2**30 = 1 Gbyte).
-        #[cfg(not(target_pointer_width = "16"))] // Prevent overflow
-        if rx_capacity > (1 << 30) {
-            panic!("receiving buffer too large, cannot exceed 1 GiB")
-        }
-        let rx_cap_log2 = mem::size_of::<usize>() * 8 - rx_capacity.leading_zeros() as usize;
+        // Prevent overflow and enforce the RFC 1323 window scaling limit.
+        let rx_cap_log2 =
+            mem::size_of::<usize>() * 8 - rx_capacity_for_window.leading_zeros() as usize;
 
         Socket {
             state: State::Closed,
@@ -867,19 +870,13 @@ impl<'a> Socket<'a> {
     /// A socket without an explicitly set hop limit value uses the default [IANA recommended]
     /// value (64).
     ///
-    /// # Panics
-    ///
-    /// This function panics if a hop limit value of 0 is given. See [RFC 1122 § 3.2.1.7].
+    /// A hop limit value of 0 is ignored to avoid sending invalid packets. See [RFC 1122 § 3.2.1.7].
     ///
     /// [IANA recommended]: https://www.iana.org/assignments/ip-parameters/ip-parameters.xhtml
     /// [RFC 1122 § 3.2.1.7]: https://tools.ietf.org/html/rfc1122#section-3.2.1.7
     pub fn set_hop_limit(&mut self, hop_limit: Option<u8>) {
         // A host MUST NOT send a datagram with a hop limit value of 0
-        if let Some(0) = hop_limit {
-            panic!("the time-to-live value of a packet must not be zero")
-        }
-
-        self.hop_limit = hop_limit
+        self.hop_limit = hop_limit.filter(|limit| *limit != 0)
     }
 
     /// Return the listen endpoint
@@ -1429,7 +1426,7 @@ impl<'a> Socket<'a> {
         }
     }
 
-    pub(crate) fn reply(ip_repr: &IpRepr, repr: &TcpRepr) -> (IpRepr, TcpRepr<'static>) {
+    pub(crate) fn reply(ip_repr: &IpRepr, repr: &TcpRepr) -> Option<(IpRepr, TcpRepr<'static>)> {
         let reply_repr = TcpRepr {
             src_port: repr.dst_port,
             dst_port: repr.src_port,
@@ -1450,14 +1447,18 @@ impl<'a> Socket<'a> {
             IpProtocol::Tcp,
             reply_repr.buffer_len(),
             64,
-        );
-        (ip_reply_repr, reply_repr)
+        )
+        .ok()?;
+        Some((ip_reply_repr, reply_repr))
     }
 
-    pub(crate) fn rst_reply(ip_repr: &IpRepr, repr: &TcpRepr) -> (IpRepr, TcpRepr<'static>) {
+    pub(crate) fn rst_reply(
+        ip_repr: &IpRepr,
+        repr: &TcpRepr,
+    ) -> Option<(IpRepr, TcpRepr<'static>)> {
         debug_assert!(repr.control != TcpControl::Rst);
 
-        let (ip_reply_repr, mut reply_repr) = Self::reply(ip_repr, repr);
+        let (ip_reply_repr, mut reply_repr) = Self::reply(ip_repr, repr)?;
 
         // See https://www.snellman.net/blog/archive/2016-02-01-tcp-rst/ for explanation
         // of why we sometimes send an RST and sometimes an RST|ACK
@@ -1467,11 +1468,15 @@ impl<'a> Socket<'a> {
             reply_repr.ack_number = Some(repr.seq_number + repr.segment_len());
         }
 
-        (ip_reply_repr, reply_repr)
+        Some((ip_reply_repr, reply_repr))
     }
 
-    fn ack_reply(&mut self, ip_repr: &IpRepr, repr: &TcpRepr) -> (IpRepr, TcpRepr<'static>) {
-        let (mut ip_reply_repr, mut reply_repr) = Self::reply(ip_repr, repr);
+    fn ack_reply(
+        &mut self,
+        ip_repr: &IpRepr,
+        repr: &TcpRepr,
+    ) -> Option<(IpRepr, TcpRepr<'static>)> {
+        let (mut ip_reply_repr, mut reply_repr) = Self::reply(ip_repr, repr)?;
         reply_repr.timestamp = repr
             .timestamp
             .and_then(|tcp_ts| tcp_ts.generate_reply(self.tsval_generator));
@@ -1527,7 +1532,7 @@ impl<'a> Socket<'a> {
 
         // Since the sACK option may have changed the length of the payload, update that.
         ip_reply_repr.set_payload_len(reply_repr.buffer_len());
-        (ip_reply_repr, reply_repr)
+        Some((ip_reply_repr, reply_repr))
     }
 
     fn challenge_ack_reply(
@@ -1543,7 +1548,7 @@ impl<'a> Socket<'a> {
         // Rate-limit to 1 per second max.
         self.challenge_ack_timer = cx.now() + Duration::from_secs(1);
 
-        Some(self.ack_reply(ip_repr, repr))
+        self.ack_reply(ip_repr, repr)
     }
 
     pub(crate) fn accepts(&self, _cx: &mut Context, ip_repr: &IpRepr, repr: &TcpRepr) -> bool {
@@ -1620,7 +1625,7 @@ impl<'a> Socket<'a> {
             (State::SynSent, TcpControl::Syn, Some(ack_number)) => {
                 if ack_number != self.local_seq_no + 1 {
                     net_debug!("unacceptable SYN|ACK in response to initial SYN");
-                    return Some(Self::rst_reply(ip_repr, repr));
+                    return Self::rst_reply(ip_repr, repr);
                 }
             }
             // TCP simultaneous open.
@@ -1643,7 +1648,7 @@ impl<'a> Socket<'a> {
                 net_debug!(
                     "expecting a SYN|ACK, received an ACK with the wrong ack_number, sending RST."
                 );
-                return Some(Self::rst_reply(ip_repr, repr));
+                return Self::rst_reply(ip_repr, repr);
             }
             // Anything else in the SYN-SENT state is invalid.
             (State::SynSent, _, _) => {
@@ -1659,7 +1664,7 @@ impl<'a> Socket<'a> {
             (State::SynReceived, _, Some(ack_number)) => {
                 if ack_number != self.local_seq_no + 1 {
                     net_debug!("unacceptable ACK in response to SYN|ACK");
-                    return Some(Self::rst_reply(ip_repr, repr));
+                    return Self::rst_reply(ip_repr, repr);
                 }
             }
             // Every acknowledgement must be for transmitted but unacknowledged data.
@@ -2220,7 +2225,7 @@ impl<'a> Socket<'a> {
             // This is fine because smoltcp assumes that it can always transmit zero or one
             // packets for every packet it receives.
             tcp_trace!("ACKing incoming segment");
-            Some(self.ack_reply(ip_repr, repr))
+            self.ack_reply(ip_repr, repr)
         } else {
             None
         }
@@ -2234,7 +2239,10 @@ impl<'a> Socket<'a> {
     }
 
     fn seq_to_transmit(&self, cx: &mut Context) -> bool {
-        let ip_header_len = match self.tuple.unwrap().local.addr {
+        let Some(tuple) = self.tuple else {
+            return false;
+        };
+        let ip_header_len = match tuple.local.addr {
             #[cfg(feature = "proto-ipv4")]
             IpAddress::Ipv4(_) => crate::wire::IPV4_HEADER_LEN,
             #[cfg(feature = "proto-ipv6")]
@@ -2442,18 +2450,26 @@ impl<'a> Socket<'a> {
             return Ok(());
         }
 
-        // NOTE(unwrap): we check tuple is not None the first thing in this function.
-        let tuple = self.tuple.unwrap();
+        // The tuple may be cleared by reset paths; skip dispatch if unset.
+        let Some(tuple) = self.tuple else {
+            return Ok(());
+        };
 
         // Construct the lowered IP representation.
         // We might need this to calculate the MSS, so do it early.
-        let mut ip_repr = IpRepr::new(
+        let mut ip_repr = match IpRepr::new(
             tuple.local.addr,
             tuple.remote.addr,
             IpProtocol::Tcp,
             0,
             self.hop_limit.unwrap_or(64),
-        );
+        ) {
+            Ok(ip_repr) => ip_repr,
+            Err(_) => {
+                tcp_trace!("dropping TCP segment due to IP version mismatch");
+                return Ok(());
+            }
+        };
 
         // Construct the basic TCP representation, an empty ACK packet.
         // We'll adjust this to be more specific as needed.
@@ -2942,9 +2958,7 @@ mod test {
             fail = true;
             Ok(())
         });
-        if fail {
-            panic!("Should not send a packet")
-        }
+        assert!(!fail, "Should not send a packet");
 
         assert_eq!(result, Ok(()))
     }

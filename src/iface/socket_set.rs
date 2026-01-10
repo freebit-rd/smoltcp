@@ -57,9 +57,8 @@ impl<'a> SocketSet<'a> {
 
     /// Add a socket to the set, and return its handle.
     ///
-    /// # Panics
-    /// This function panics if the storage is fixed-size (not a `Vec`) and is full.
-    pub fn add<T: AnySocket<'a>>(&mut self, socket: T) -> SocketHandle {
+    /// Returns `Err(SocketSetError::Full)` if the storage is fixed-size (not a `Vec`) and is full.
+    pub fn add<T: AnySocket<'a>>(&mut self, socket: T) -> Result<SocketHandle, SocketSetError> {
         fn put<'a>(index: usize, slot: &mut SocketStorage<'a>, socket: Socket<'a>) -> SocketHandle {
             net_trace!("[{}]: adding", index);
             let handle = SocketHandle(index);
@@ -75,58 +74,40 @@ impl<'a> SocketSet<'a> {
 
         for (index, slot) in self.sockets.iter_mut().enumerate() {
             if slot.inner.is_none() {
-                return put(index, slot, socket);
+                return Ok(put(index, slot, socket));
             }
         }
 
         match &mut self.sockets {
-            ManagedSlice::Borrowed(_) => panic!("adding a socket to a full SocketSet"),
+            ManagedSlice::Borrowed(_) => Err(SocketSetError::Full),
             #[cfg(feature = "alloc")]
             ManagedSlice::Owned(sockets) => {
                 sockets.push(SocketStorage { inner: None });
                 let index = sockets.len() - 1;
-                put(index, &mut sockets[index], socket)
+                Ok(put(index, &mut sockets[index], socket))
             }
         }
     }
 
     /// Get a socket from the set by its handle, as mutable.
     ///
-    /// # Panics
-    /// This function may panic if the handle does not belong to this socket set
-    /// or the socket has the wrong type.
-    pub fn get<T: AnySocket<'a>>(&self, handle: SocketHandle) -> &T {
-        match self.sockets[handle.0].inner.as_ref() {
-            Some(item) => {
-                T::downcast(&item.socket).expect("handle refers to a socket of a wrong type")
-            }
-            None => panic!("handle does not refer to a valid socket"),
-        }
+    /// Returns `Err(SocketSetError)` if the handle is invalid or the socket type mismatches.
+    pub fn get<T: AnySocket<'a>>(&self, handle: SocketHandle) -> Result<&T, SocketSetError> {
+        self.try_get(handle)
     }
 
     /// Get a mutable socket from the set by its handle, as mutable.
     ///
-    /// # Panics
-    /// This function may panic if the handle does not belong to this socket set
-    /// or the socket has the wrong type.
-    pub fn get_mut<T: AnySocket<'a>>(&mut self, handle: SocketHandle) -> &mut T {
-        match self.sockets[handle.0].inner.as_mut() {
-            Some(item) => T::downcast_mut(&mut item.socket)
-                .expect("handle refers to a socket of a wrong type"),
-            None => panic!("handle does not refer to a valid socket"),
-        }
+    /// Returns `Err(SocketSetError)` if the handle is invalid or the socket type mismatches.
+    pub fn get_mut<T: AnySocket<'a>>(&mut self, handle: SocketHandle) -> Result<&mut T, SocketSetError> {
+        self.try_get_mut(handle)
     }
 
     /// Remove a socket from the set, without changing its state.
     ///
-    /// # Panics
-    /// This function may panic if the handle does not belong to this socket set.
-    pub fn remove(&mut self, handle: SocketHandle) -> Socket<'a> {
-        net_trace!("[{}]: removing", handle.0);
-        match self.sockets[handle.0].inner.take() {
-            Some(item) => item.socket,
-            None => panic!("handle does not refer to a valid socket"),
-        }
+    /// Returns `Err(SocketSetError)` if the handle is invalid.
+    pub fn remove(&mut self, handle: SocketHandle) -> Result<Socket<'a>, SocketSetError> {
+        self.try_remove(handle)
     }
 
     /// Get an iterator to the inner sockets.
@@ -158,6 +139,8 @@ pub enum SocketSetError {
     Vacant,
     /// 要求した T と実体の型が異なる
     WrongType,
+    /// ストレージが満杯
+    Full,
 }
 
 impl core::fmt::Display for SocketSetError {
@@ -166,6 +149,7 @@ impl core::fmt::Display for SocketSetError {
             SocketSetError::OutOfBounds => write!(f, "handle is out of bounds"),
             SocketSetError::Vacant => write!(f, "handle does not refer to a valid socket"),
             SocketSetError::WrongType => write!(f, "handle refers to a socket of a wrong type"),
+            SocketSetError::Full => write!(f, "socket storage is full"),
         }
     }
 }

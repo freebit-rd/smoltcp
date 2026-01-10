@@ -61,7 +61,10 @@ fn main() {
     let udp_rx_buffer = udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 4], vec![0; 1024]);
     let udp_tx_buffer = udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY], vec![0; 0]);
     let udp_socket = udp::Socket::new(udp_rx_buffer, udp_tx_buffer);
-    let udp_handle = sockets.add(udp_socket);
+    let udp_handle = match sockets.add(udp_socket) {
+        Ok(handle) => handle,
+        Err(_) => return,
+    };
 
     // Join a multicast group
     iface.join_multicast_group(GROUP).unwrap();
@@ -70,7 +73,10 @@ fn main() {
         let timestamp = Instant::now();
         iface.poll(timestamp, &mut device, &mut sockets);
 
-        let socket = sockets.get_mut::<udp::Socket>(udp_handle);
+        let socket = match sockets.get_mut::<udp::Socket>(udp_handle) {
+            Ok(socket) => socket,
+            Err(_) => return,
+        };
         if !socket.is_open() {
             socket.bind(PORT).unwrap()
         }

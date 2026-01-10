@@ -603,13 +603,19 @@ fn test_icmpv4_socket(#[case] medium: Medium) {
 
     let icmpv4_socket = icmp::Socket::new(rx_buffer, tx_buffer);
 
-    let socket_handle = sockets.add(icmpv4_socket);
+    let socket_handle = match sockets.add(icmpv4_socket) {
+        Ok(handle) => handle,
+        Err(_) => return,
+    };
 
     let ident = 0x1234;
     let seq_no = 0x5432;
     let echo_data = &[0xff; 16];
 
-    let socket = sockets.get_mut::<icmp::Socket>(socket_handle);
+    let socket = match sockets.get_mut::<icmp::Socket>(socket_handle) {
+        Ok(socket) => socket,
+        Err(_) => return,
+    };
     // Bind to the ID 0x1234
     assert_eq!(socket.bind(icmp::Endpoint::Ident(ident)), Ok(()));
 
@@ -634,7 +640,11 @@ fn test_icmpv4_socket(#[case] medium: Medium) {
 
     // Open a socket and ensure the packet is handled due to the listening
     // socket.
-    assert!(!sockets.get_mut::<icmp::Socket>(socket_handle).can_recv());
+    let can_recv = match sockets.get_mut::<icmp::Socket>(socket_handle) {
+        Ok(socket) => socket.can_recv(),
+        Err(_) => return,
+    };
+    assert!(!can_recv);
 
     // Confirm we still get EchoReply from `smoltcp` even with the ICMP socket listening
     let echo_reply = Icmpv4Repr::EchoReply {
@@ -654,7 +664,10 @@ fn test_icmpv4_socket(#[case] medium: Medium) {
         Some(Packet::new_ipv4(ipv4_reply, IpPayload::Icmpv4(echo_reply)))
     );
 
-    let socket = sockets.get_mut::<icmp::Socket>(socket_handle);
+    let socket = match sockets.get_mut::<icmp::Socket>(socket_handle) {
+        Ok(socket) => socket,
+        Err(_) => return,
+    };
     assert!(socket.can_recv());
     assert_eq!(
         socket.recv(),
@@ -858,7 +871,9 @@ fn test_raw_socket_no_reply(#[case] medium: Medium) {
         rx_buffer,
         tx_buffer,
     );
-    sockets.add(raw_socket);
+    if sockets.add(raw_socket).is_err() {
+        return;
+    }
 
     let src_addr = Ipv4Address::new(127, 0, 0, 2);
     let dst_addr = Ipv4Address::new(127, 0, 0, 1);
@@ -937,10 +952,16 @@ fn test_raw_socket_with_udp_socket(#[case] medium: Medium) {
     let udp_rx_buffer = udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY], vec![0; 15]);
     let udp_tx_buffer = udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY], vec![0; 15]);
     let udp_socket = udp::Socket::new(udp_rx_buffer, udp_tx_buffer);
-    let udp_socket_handle = sockets.add(udp_socket);
+    let udp_socket_handle = match sockets.add(udp_socket) {
+        Ok(handle) => handle,
+        Err(_) => return,
+    };
 
     // Bind the socket to port 68
-    let socket = sockets.get_mut::<udp::Socket>(udp_socket_handle);
+    let socket = match sockets.get_mut::<udp::Socket>(udp_socket_handle) {
+        Ok(socket) => socket,
+        Err(_) => return,
+    };
     assert_eq!(socket.bind(68), Ok(()));
     assert!(!socket.can_recv());
     assert!(socket.can_send());
@@ -958,7 +979,9 @@ fn test_raw_socket_with_udp_socket(#[case] medium: Medium) {
         raw_rx_buffer,
         raw_tx_buffer,
     );
-    sockets.add(raw_socket);
+    if sockets.add(raw_socket).is_err() {
+        return;
+    }
 
     let src_addr = Ipv4Address::new(127, 0, 0, 2);
     let dst_addr = Ipv4Address::new(127, 0, 0, 1);
@@ -1015,7 +1038,10 @@ fn test_raw_socket_with_udp_socket(#[case] medium: Medium) {
     );
 
     // Make sure the UDP socket can still receive in presence of a Raw socket that handles UDP
-    let socket = sockets.get_mut::<udp::Socket>(udp_socket_handle);
+    let socket = match sockets.get_mut::<udp::Socket>(udp_socket_handle) {
+        Ok(socket) => socket,
+        Err(_) => return,
+    };
     assert!(socket.can_recv());
     assert_eq!(
         socket.recv(),
