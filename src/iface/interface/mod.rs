@@ -751,10 +751,9 @@ impl Interface {
                     // requests from the socket. However, without an additional rate limiting
                     // mechanism, we would spin on every socket that has yet to discover its
                     // neighbor.
-                    item.meta.neighbor_missing(
-                        self.inner.now,
-                        neighbor_addr.expect("non-IP response packet"),
-                    );
+                    if let Some(neighbor_addr) = neighbor_addr {
+                        item.meta.neighbor_missing(self.inner.now, neighbor_addr);
+                    }
                 }
                 Ok(()) => {}
             }

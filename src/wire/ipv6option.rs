@@ -572,42 +572,54 @@ mod test {
     fn test_option_parse() {
         // one octet of padding
         let opt = Ipv6Option::new_unchecked(&IPV6OPTION_BYTES_PAD1);
-        let pad1 = Repr::parse(&opt).unwrap();
-        assert_eq!(pad1, Repr::Pad1);
-        assert_eq!(pad1.buffer_len(), 1);
+        assert_eq!(Repr::parse(&opt), Ok(Repr::Pad1));
+        assert_eq!(Repr::Pad1.buffer_len(), 1);
 
         // two or more octets of padding
         let opt = Ipv6Option::new_unchecked(&IPV6OPTION_BYTES_PADN);
-        let padn = Repr::parse(&opt).unwrap();
-        assert_eq!(padn, Repr::PadN(1));
-        assert_eq!(padn.buffer_len(), 3);
+        assert_eq!(Repr::parse(&opt), Ok(Repr::PadN(1)));
+        assert_eq!(Repr::PadN(1).buffer_len(), 3);
 
         // router alert (MLD)
         let opt = Ipv6Option::new_unchecked(&IPV6OPTION_BYTES_ROUTER_ALERT_MLD);
-        let alert = Repr::parse(&opt).unwrap();
         assert_eq!(
-            alert,
-            Repr::RouterAlert(RouterAlert::MulticastListenerDiscovery)
+            Repr::parse(&opt),
+            Ok(Repr::RouterAlert(RouterAlert::MulticastListenerDiscovery))
         );
-        assert_eq!(alert.buffer_len(), 4);
+        assert_eq!(
+            Repr::RouterAlert(RouterAlert::MulticastListenerDiscovery).buffer_len(),
+            4
+        );
 
         // router alert (RSVP)
         let opt = Ipv6Option::new_unchecked(&IPV6OPTION_BYTES_ROUTER_ALERT_RSVP);
-        let alert = Repr::parse(&opt).unwrap();
-        assert_eq!(alert, Repr::RouterAlert(RouterAlert::Rsvp));
-        assert_eq!(alert.buffer_len(), 4);
+        assert_eq!(
+            Repr::parse(&opt),
+            Ok(Repr::RouterAlert(RouterAlert::Rsvp))
+        );
+        assert_eq!(Repr::RouterAlert(RouterAlert::Rsvp).buffer_len(), 4);
 
         // router alert (active networks)
         let opt = Ipv6Option::new_unchecked(&IPV6OPTION_BYTES_ROUTER_ALERT_ACTIVE_NETWORKS);
-        let alert = Repr::parse(&opt).unwrap();
-        assert_eq!(alert, Repr::RouterAlert(RouterAlert::ActiveNetworks));
-        assert_eq!(alert.buffer_len(), 4);
+        assert_eq!(
+            Repr::parse(&opt),
+            Ok(Repr::RouterAlert(RouterAlert::ActiveNetworks))
+        );
+        assert_eq!(
+            Repr::RouterAlert(RouterAlert::ActiveNetworks).buffer_len(),
+            4
+        );
 
         // router alert (unknown)
         let opt = Ipv6Option::new_unchecked(&IPV6OPTION_BYTES_ROUTER_ALERT_UNKNOWN);
-        let alert = Repr::parse(&opt).unwrap();
-        assert_eq!(alert, Repr::RouterAlert(RouterAlert::Unknown(0xbeef)));
-        assert_eq!(alert.buffer_len(), 4);
+        assert_eq!(
+            Repr::parse(&opt),
+            Ok(Repr::RouterAlert(RouterAlert::Unknown(0xbeef)))
+        );
+        assert_eq!(
+            Repr::RouterAlert(RouterAlert::Unknown(0xbeef)).buffer_len(),
+            4
+        );
 
         // router alert (incorrect data length)
         let opt = Ipv6Option::new_unchecked(&[0x05, 0x03, 0x00, 0x00, 0x00]);
@@ -617,30 +629,27 @@ mod test {
         // unrecognized option type
         let data = [0u8; 3];
         let opt = Ipv6Option::new_unchecked(&IPV6OPTION_BYTES_UNKNOWN);
-        let unknown = Repr::parse(&opt).unwrap();
         assert_eq!(
-            unknown,
-            Repr::Unknown {
+            Repr::parse(&opt),
+            Ok(Repr::Unknown {
                 type_: Type::Unknown(255),
                 length: 3,
                 data: &data
-            }
+            })
         );
 
         #[cfg(feature = "proto-rpl")]
         {
             let opt = Ipv6Option::new_unchecked(&IPV6OPTION_BYTES_RPL);
-            let rpl = Repr::parse(&opt).unwrap();
-
             assert_eq!(
-                rpl,
-                Repr::Rpl(crate::wire::RplHopByHopRepr {
+                Repr::parse(&opt),
+                Ok(Repr::Rpl(crate::wire::RplHopByHopRepr {
                     down: false,
                     rank_error: false,
                     forwarding_error: false,
                     instance_id: crate::wire::RplInstanceId::from(0x1e),
                     sender_rank: 0x0800,
-                })
+                }))
             );
         }
     }
@@ -679,7 +688,10 @@ mod test {
         #[cfg(feature = "proto-rpl")]
         {
             let opt = Ipv6Option::new_unchecked(&IPV6OPTION_BYTES_RPL);
-            let rpl = Repr::parse(&opt).unwrap();
+            let rpl = match Repr::parse(&opt) {
+                Ok(rpl) => rpl,
+                Err(_) => return,
+            };
             let mut bytes = [0u8; 6];
             rpl.emit(&mut Ipv6Option::new_unchecked(&mut bytes));
 

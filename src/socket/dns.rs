@@ -60,6 +60,8 @@ pub enum GetQueryResultError {
     Pending,
     /// Query failed.
     Failed,
+    /// Query handle does not refer to an active query.
+    NoQuery,
 }
 
 impl core::fmt::Display for GetQueryResultError {
@@ -67,6 +69,7 @@ impl core::fmt::Display for GetQueryResultError {
         match self {
             GetQueryResultError::Pending => write!(f, "Query is not done yet"),
             GetQueryResultError::Failed => write!(f, "Query failed"),
+            GetQueryResultError::NoQuery => write!(f, "Query handle does not refer to a query"),
         }
     }
 }
@@ -157,8 +160,9 @@ impl<'a> Socket<'a> {
     {
         let truncated_servers = &servers[..min(servers.len(), DNS_MAX_SERVER_COUNT)];
 
+        let servers = Vec::from_slice(truncated_servers).unwrap_or_else(|_| Vec::new());
         Socket {
-            servers: Vec::from_slice(truncated_servers).unwrap(),
+            servers,
             queries: queries.into(),
             hop_limit: None,
         }
@@ -170,9 +174,10 @@ impl<'a> Socket<'a> {
     pub fn update_servers(&mut self, servers: &[IpAddress]) {
         if servers.len() > DNS_MAX_SERVER_COUNT {
             net_trace!("Max DNS Servers exceeded. Increase MAX_SERVER_COUNT");
-            self.servers = Vec::from_slice(&servers[..DNS_MAX_SERVER_COUNT]).unwrap();
+            self.servers =
+                Vec::from_slice(&servers[..DNS_MAX_SERVER_COUNT]).unwrap_or_else(|_| Vec::new());
         } else {
-            self.servers = Vec::from_slice(servers).unwrap();
+            self.servers = Vec::from_slice(servers).unwrap_or_else(|_| Vec::new());
         }
     }
 
@@ -188,19 +193,13 @@ impl<'a> Socket<'a> {
     /// A socket without an explicitly set hop limit value uses the default [IANA recommended]
     /// value (64).
     ///
-    /// # Panics
-    ///
-    /// This function panics if a hop limit value of 0 is given. See [RFC 1122 § 3.2.1.7].
+    /// A hop limit value of 0 is ignored to avoid sending invalid packets. See [RFC 1122 § 3.2.1.7].
     ///
     /// [IANA recommended]: https://www.iana.org/assignments/ip-parameters/ip-parameters.xhtml
     /// [RFC 1122 § 3.2.1.7]: https://tools.ietf.org/html/rfc1122#section-3.2.1.7
     pub fn set_hop_limit(&mut self, hop_limit: Option<u8>) {
         // A host MUST NOT send a datagram with a hop limit value of 0
-        if let Some(0) = hop_limit {
-            panic!("the time-to-live value of a packet must not be zero")
-        }
-
-        self.hop_limit = hop_limit
+        self.hop_limit = hop_limit.filter(|limit| *limit != 0)
     }
 
     fn find_free_query(&mut self) -> Option<QueryHandle> {
@@ -243,12 +242,16 @@ impl<'a> Socket<'a> {
         if name[name.len() - 1] == b'.' {
             name = &name[..name.len() - 1];
         }
+        if name.is_empty() {
+            net_trace!("invalid name: zero length");
+            return Err(StartQueryError::InvalidName);
+        }
 
         let mut raw_name: Vec<u8, DNS_MAX_NAME_SIZE> = Vec::new();
 
         let mut mdns = MulticastDns::Disabled;
         #[cfg(feature = "socket-mdns")]
-        if name.split(|&c| c == b'.').last().unwrap() == b"local" {
+        if name.split(|&c| c == b'.').last() == Some(b"local") {
             net_trace!("Starting a mDNS query");
             mdns = MulticastDns::Enabled;
         }
@@ -315,14 +318,15 @@ impl<'a> Socket<'a> {
     ///
     /// If the query is completed, the query slot is automatically freed.
     ///
-    /// # Panics
-    /// Panics if the QueryHandle corresponds to a free slot.
+    /// Returns `Err(GetQueryResultError::NoQuery)` if the handle refers to a free slot.
     pub fn get_query_result(
         &mut self,
         handle: QueryHandle,
     ) -> Result<Vec<IpAddress, DNS_MAX_RESULT_COUNT>, GetQueryResultError> {
         let slot = &mut self.queries[handle.0];
-        let q = slot.as_mut().unwrap();
+        let Some(q) = slot.as_mut() else {
+            return Err(GetQueryResultError::NoQuery);
+        };
         match &mut q.state {
             // Query is not done yet.
             State::Pending(_) => Err(GetQueryResultError::Pending),
@@ -341,31 +345,24 @@ impl<'a> Socket<'a> {
 
     /// Cancels a query, freeing the slot.
     ///
-    /// # Panics
-    ///
-    /// Panics if the QueryHandle corresponds to an already free slot.
+    /// A handle referring to a free slot is ignored.
     pub fn cancel_query(&mut self, handle: QueryHandle) {
         let slot = &mut self.queries[handle.0];
-        if slot.is_none() {
-            panic!("Canceling query in a free slot.")
+        if slot.is_some() {
+            *slot = None; // Free up the slot for recycling.
         }
-        *slot = None; // Free up the slot for recycling.
     }
 
     /// Assign a waker to a query slot
     ///
     /// The waker will be woken when the query completes, either successfully or failed.
     ///
-    /// # Panics
-    ///
-    /// Panics if the QueryHandle corresponds to an already free slot.
+    /// A handle referring to a free slot is ignored.
     #[cfg(feature = "async")]
     pub fn register_query_waker(&mut self, handle: QueryHandle, waker: &Waker) {
-        self.queries[handle.0]
-            .as_mut()
-            .unwrap()
-            .waker
-            .register(waker);
+        if let Some(query) = self.queries[handle.0].as_mut() {
+            query.waker.register(waker);
+        }
     }
 
     pub(crate) fn accepts(&self, ip_repr: &IpRepr, udp_repr: &UdpRepr) -> bool {

@@ -772,10 +772,11 @@ impl<'a> TcpOption<'a> {
                             .filter(|s| s.is_some())
                             .enumerate()
                             .for_each(|(i, s)| {
-                                let (first, second) = *s.as_ref().unwrap();
-                                let pos = i * 8 + 2;
-                                NetworkEndian::write_u32(&mut buffer[pos..], first);
-                                NetworkEndian::write_u32(&mut buffer[pos + 4..], second);
+                                if let Some((first, second)) = s {
+                                    let pos = i * 8 + 2;
+                                    NetworkEndian::write_u32(&mut buffer[pos..], first);
+                                    NetworkEndian::write_u32(&mut buffer[pos + 4..], second);
+                                }
                             });
                     }
                     &TcpOption::TimeStamp { tsval, tsecr } => {
@@ -1326,9 +1327,8 @@ mod test {
             &SRC_ADDR.into(),
             &DST_ADDR.into(),
             &ChecksumCapabilities::default(),
-        )
-        .unwrap();
-        assert_eq!(repr, packet_repr());
+        );
+        assert_eq!(repr, Ok(packet_repr()));
     }
 
     #[test]

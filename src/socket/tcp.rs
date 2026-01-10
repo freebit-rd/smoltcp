@@ -2239,7 +2239,10 @@ impl<'a> Socket<'a> {
     }
 
     fn seq_to_transmit(&self, cx: &mut Context) -> bool {
-        let ip_header_len = match self.tuple.unwrap().local.addr {
+        let Some(tuple) = self.tuple else {
+            return false;
+        };
+        let ip_header_len = match tuple.local.addr {
             #[cfg(feature = "proto-ipv4")]
             IpAddress::Ipv4(_) => crate::wire::IPV4_HEADER_LEN,
             #[cfg(feature = "proto-ipv6")]
@@ -2447,8 +2450,10 @@ impl<'a> Socket<'a> {
             return Ok(());
         }
 
-        // NOTE(unwrap): we check tuple is not None the first thing in this function.
-        let tuple = self.tuple.unwrap();
+        // The tuple may be cleared by reset paths; skip dispatch if unset.
+        let Some(tuple) = self.tuple else {
+            return Ok(());
+        };
 
         // Construct the lowered IP representation.
         // We might need this to calculate the MSS, so do it early.

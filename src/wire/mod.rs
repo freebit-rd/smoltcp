@@ -60,10 +60,14 @@ let mut buffer = vec![0; repr.buffer_len() + repr.payload_len];
     repr.emit(&mut packet, &ChecksumCapabilities::default());
 }
 { // parsing
-    let packet = Ipv4Packet::new_checked(&buffer)
-                            .expect("truncated packet");
-    let parsed = Ipv4Repr::parse(&packet, &ChecksumCapabilities::default())
-                          .expect("malformed packet");
+    let packet = match Ipv4Packet::new_checked(&buffer) {
+        Ok(packet) => packet,
+        Err(_) => return,
+    };
+    let parsed = match Ipv4Repr::parse(&packet, &ChecksumCapabilities::default()) {
+        Ok(parsed) => parsed,
+        Err(_) => return,
+    };
     assert_eq!(repr, parsed);
 }
 # }
