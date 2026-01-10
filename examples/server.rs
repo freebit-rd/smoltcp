@@ -83,11 +83,26 @@ fn main() {
     let tcp4_socket = tcp::Socket::new(tcp4_rx_buffer, tcp4_tx_buffer);
 
     let mut sockets = SocketSet::new(vec![]);
-    let udp_handle = sockets.add(udp_socket);
-    let tcp1_handle = sockets.add(tcp1_socket);
-    let tcp2_handle = sockets.add(tcp2_socket);
-    let tcp3_handle = sockets.add(tcp3_socket);
-    let tcp4_handle = sockets.add(tcp4_socket);
+    let udp_handle = match sockets.add(udp_socket) {
+        Ok(handle) => handle,
+        Err(_) => return,
+    };
+    let tcp1_handle = match sockets.add(tcp1_socket) {
+        Ok(handle) => handle,
+        Err(_) => return,
+    };
+    let tcp2_handle = match sockets.add(tcp2_socket) {
+        Ok(handle) => handle,
+        Err(_) => return,
+    };
+    let tcp3_handle = match sockets.add(tcp3_socket) {
+        Ok(handle) => handle,
+        Err(_) => return,
+    };
+    let tcp4_handle = match sockets.add(tcp4_socket) {
+        Ok(handle) => handle,
+        Err(_) => return,
+    };
 
     let mut tcp_6970_active = false;
     loop {
@@ -95,7 +110,10 @@ fn main() {
         iface.poll(timestamp, &mut device, &mut sockets);
 
         // udp:6969: respond "hello"
-        let socket = sockets.get_mut::<udp::Socket>(udp_handle);
+        let socket = match sockets.get_mut::<udp::Socket>(udp_handle) {
+            Ok(socket) => socket,
+            Err(_) => return,
+        };
         if !socket.is_open() {
             socket.bind(6969).unwrap()
         }
@@ -115,7 +133,10 @@ fn main() {
         }
 
         // tcp:6969: respond "hello"
-        let socket = sockets.get_mut::<tcp::Socket>(tcp1_handle);
+        let socket = match sockets.get_mut::<tcp::Socket>(tcp1_handle) {
+            Ok(socket) => socket,
+            Err(_) => return,
+        };
         if !socket.is_open() {
             socket.listen(6969).unwrap();
         }
@@ -128,7 +149,10 @@ fn main() {
         }
 
         // tcp:6970: echo with reverse
-        let socket = sockets.get_mut::<tcp::Socket>(tcp2_handle);
+        let socket = match sockets.get_mut::<tcp::Socket>(tcp2_handle) {
+            Ok(socket) => socket,
+            Err(_) => return,
+        };
         if !socket.is_open() {
             socket.listen(6970).unwrap()
         }
@@ -164,7 +188,10 @@ fn main() {
         }
 
         // tcp:6971: sinkhole
-        let socket = sockets.get_mut::<tcp::Socket>(tcp3_handle);
+        let socket = match sockets.get_mut::<tcp::Socket>(tcp3_handle) {
+            Ok(socket) => socket,
+            Err(_) => return,
+        };
         if !socket.is_open() {
             socket.listen(6971).unwrap();
             socket.set_keep_alive(Some(Duration::from_millis(1000)));
@@ -185,7 +212,10 @@ fn main() {
         }
 
         // tcp:6972: fountain
-        let socket = sockets.get_mut::<tcp::Socket>(tcp4_handle);
+        let socket = match sockets.get_mut::<tcp::Socket>(tcp4_handle) {
+            Ok(socket) => socket,
+            Err(_) => return,
+        };
         if !socket.is_open() {
             socket.listen(6972).unwrap()
         }

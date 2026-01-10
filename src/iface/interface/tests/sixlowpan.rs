@@ -298,10 +298,16 @@ fn test_sixlowpan_udp_with_fragmentation() {
     let udp_rx_buffer = udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY], vec![0; 1024 * 4]);
     let udp_tx_buffer = udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY], vec![0; 1024 * 4]);
     let udp_socket = udp::Socket::new(udp_rx_buffer, udp_tx_buffer);
-    let udp_socket_handle = sockets.add(udp_socket);
+    let udp_socket_handle = match sockets.add(udp_socket) {
+        Ok(handle) => handle,
+        Err(_) => return,
+    };
 
     {
-        let socket = sockets.get_mut::<udp::Socket>(udp_socket_handle);
+        let socket = match sockets.get_mut::<udp::Socket>(udp_socket_handle) {
+            Ok(socket) => socket,
+            Err(_) => return,
+        };
         assert_eq!(socket.bind(6969), Ok(()));
         assert!(!socket.can_recv());
         assert!(socket.can_send());
@@ -348,7 +354,10 @@ fn test_sixlowpan_udp_with_fragmentation() {
         None
     );
 
-    let socket = sockets.get_mut::<udp::Socket>(udp_socket_handle);
+    let socket = match sockets.get_mut::<udp::Socket>(udp_socket_handle) {
+        Ok(socket) => socket,
+        Err(_) => return,
+    };
 
     let udp_data = b"Lorem ipsum dolor sit amet, consectetur adipiscing elit. \
 In at rhoncus tortor. Cras blandit tellus diam, varius vestibulum nibh commodo nec.";

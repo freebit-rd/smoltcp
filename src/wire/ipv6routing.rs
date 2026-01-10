@@ -273,7 +273,9 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Header<T> {
                 data[5] = 0;
             }
 
-            _ => panic!("Unrecognized routing type when clearing reserved fields."),
+            _ => {
+                // Unknown routing type; leave reserved fields unchanged.
+            }
         }
     }
 }

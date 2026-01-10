@@ -728,7 +728,7 @@ mod test {
                 ) => continue,
                 (6, Ok(Repr::RouterAlert(RouterAlert::Rsvp))) => continue,
                 (7, Err(Error)) => continue,
-                (i, res) => panic!("Unexpected option `{res:?}` at index {i}"),
+                (i, res) => assert!(false, "Unexpected option `{res:?}` at index {i}"),
             }
         }
     }

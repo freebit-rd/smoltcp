@@ -625,13 +625,20 @@ impl<'a> Socket<'a> {
                     }
                 };
 
-                let ip_repr = IpRepr::new(
+                let ip_repr = match IpRepr::new(
                     src_addr,
                     dst_addr,
                     IpProtocol::Udp,
                     udp_repr.header_len() + payload.len(),
                     hop_limit,
-                );
+                ) {
+                    Ok(ip_repr) => ip_repr,
+                    Err(_) => {
+                        net_trace!("ip version mismatch for destination {}", dst_addr);
+                        q.set_state(State::Failure);
+                        continue;
+                    }
+                };
 
                 net_trace!(
                     "sending {} octets to {} from port {}",

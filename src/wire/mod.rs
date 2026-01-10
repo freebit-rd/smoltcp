@@ -398,20 +398,20 @@ impl HardwareAddress {
     }
 
     #[cfg(feature = "medium-ethernet")]
-    pub(crate) fn ethernet_or_panic(&self) -> EthernetAddress {
+    pub(crate) fn ethernet(&self) -> Option<EthernetAddress> {
         match self {
-            HardwareAddress::Ethernet(addr) => *addr,
+            HardwareAddress::Ethernet(addr) => Some(*addr),
             #[allow(unreachable_patterns)]
-            _ => panic!("HardwareAddress is not Ethernet."),
+            _ => None,
         }
     }
 
     #[cfg(feature = "medium-ieee802154")]
-    pub(crate) fn ieee802154_or_panic(&self) -> Ieee802154Address {
+    pub(crate) fn ieee802154(&self) -> Option<Ieee802154Address> {
         match self {
-            HardwareAddress::Ieee802154(addr) => *addr,
+            HardwareAddress::Ieee802154(addr) => Some(*addr),
             #[allow(unreachable_patterns)]
-            _ => panic!("HardwareAddress is not Ethernet."),
+            _ => None,
         }
     }
 

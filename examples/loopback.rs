@@ -120,8 +120,14 @@ fn main() {
 
     let mut sockets: [_; 2] = Default::default();
     let mut sockets = SocketSet::new(&mut sockets[..]);
-    let server_handle = sockets.add(server_socket);
-    let client_handle = sockets.add(client_socket);
+    let server_handle = match sockets.add(server_socket) {
+        Ok(handle) => handle,
+        Err(_) => return,
+    };
+    let client_handle = match sockets.add(client_socket) {
+        Ok(handle) => handle,
+        Err(_) => return,
+    };
 
     let mut did_listen = false;
     let mut did_connect = false;
@@ -129,7 +135,10 @@ fn main() {
     while !done && clock.elapsed() < Instant::from_millis(10_000) {
         iface.poll(clock.elapsed(), &mut device, &mut sockets);
 
-        let mut socket = sockets.get_mut::<tcp::Socket>(server_handle);
+        let mut socket = match sockets.get_mut::<tcp::Socket>(server_handle) {
+            Ok(socket) => socket,
+            Err(_) => return,
+        };
         if !socket.is_active() && !socket.is_listening() {
             if !did_listen {
                 debug!("listening");
@@ -147,7 +156,10 @@ fn main() {
             done = true;
         }
 
-        let mut socket = sockets.get_mut::<tcp::Socket>(client_handle);
+        let mut socket = match sockets.get_mut::<tcp::Socket>(client_handle) {
+            Ok(socket) => socket,
+            Err(_) => return,
+        };
         let cx = iface.context();
         if !socket.is_open() {
             if !did_connect {

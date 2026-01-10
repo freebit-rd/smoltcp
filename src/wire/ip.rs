@@ -536,35 +536,34 @@ impl From<Ipv6Repr> for Repr {
 impl Repr {
     /// Create a new IpRepr, choosing the right IP version for the src/dst addrs.
     ///
-    /// # Panics
+    /// Returns `Err(Error)` if `src_addr` and `dst_addr` are different IP versions.
     ///
-    /// Panics if `src_addr` and `dst_addr` are different IP version.
     pub fn new(
         src_addr: Address,
         dst_addr: Address,
         next_header: Protocol,
         payload_len: usize,
         hop_limit: u8,
-    ) -> Self {
+    ) -> Result<Self> {
         match (src_addr, dst_addr) {
             #[cfg(feature = "proto-ipv4")]
-            (Address::Ipv4(src_addr), Address::Ipv4(dst_addr)) => Self::Ipv4(Ipv4Repr {
+            (Address::Ipv4(src_addr), Address::Ipv4(dst_addr)) => Ok(Self::Ipv4(Ipv4Repr {
                 src_addr,
                 dst_addr,
                 next_header,
                 payload_len,
                 hop_limit,
-            }),
+            })),
             #[cfg(feature = "proto-ipv6")]
-            (Address::Ipv6(src_addr), Address::Ipv6(dst_addr)) => Self::Ipv6(Ipv6Repr {
+            (Address::Ipv6(src_addr), Address::Ipv6(dst_addr)) => Ok(Self::Ipv6(Ipv6Repr {
                 src_addr,
                 dst_addr,
                 next_header,
                 payload_len,
                 hop_limit,
-            }),
+            })),
             #[allow(unreachable_patterns)]
-            _ => panic!("IP version mismatch: src={src_addr:?} dst={dst_addr:?}"),
+            _ => Err(Error),
         }
     }
 

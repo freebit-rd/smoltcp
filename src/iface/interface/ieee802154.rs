@@ -54,7 +54,10 @@ impl InterfaceInner {
         packet: Packet,
         frag: &mut Fragmenter,
     ) {
-        let ll_src_a = self.hardware_addr.ieee802154_or_panic();
+        let ll_src_a = match self.hardware_addr.ieee802154() {
+            Some(addr) => addr,
+            None => return Ok(()),
+        };
 
         // Create the IEEE802.15.4 header.
         let ieee_repr = Ieee802154Repr {

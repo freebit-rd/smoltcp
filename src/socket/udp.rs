@@ -197,19 +197,13 @@ impl<'a> Socket<'a> {
     /// A socket without an explicitly set hop limit value uses the default [IANA recommended]
     /// value (64).
     ///
-    /// # Panics
-    ///
-    /// This function panics if a hop limit value of 0 is given. See [RFC 1122 § 3.2.1.7].
+    /// A hop limit value of 0 is ignored to avoid sending invalid packets. See [RFC 1122 § 3.2.1.7].
     ///
     /// [IANA recommended]: https://www.iana.org/assignments/ip-parameters/ip-parameters.xhtml
     /// [RFC 1122 § 3.2.1.7]: https://tools.ietf.org/html/rfc1122#section-3.2.1.7
     pub fn set_hop_limit(&mut self, hop_limit: Option<u8>) {
         // A host MUST NOT send a datagram with a hop limit value of 0
-        if let Some(0) = hop_limit {
-            panic!("the time-to-live value of a packet must not be zero")
-        }
-
-        self.hop_limit = hop_limit
+        self.hop_limit = hop_limit.filter(|limit| *limit != 0)
     }
 
     /// Bind the socket to the given endpoint.
@@ -579,13 +573,23 @@ impl<'a> Socket<'a> {
                 src_port: endpoint.port,
                 dst_port: packet_meta.endpoint.port,
             };
-            let ip_repr = IpRepr::new(
+            let ip_repr = match IpRepr::new(
                 src_addr,
                 packet_meta.endpoint.addr,
                 IpProtocol::Udp,
                 repr.header_len() + payload_buf.len(),
                 hop_limit,
-            );
+            ) {
+                Ok(ip_repr) => ip_repr,
+                Err(_) => {
+                    net_trace!(
+                        "udp:{}:{}: IP version mismatch, dropping.",
+                        endpoint,
+                        packet_meta.endpoint
+                    );
+                    return Ok(());
+                }
+            };
 
             emit(cx, packet_meta.meta, (ip_repr, repr, payload_buf))
         });

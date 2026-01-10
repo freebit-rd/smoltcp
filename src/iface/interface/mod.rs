@@ -296,9 +296,8 @@ impl Interface {
 
     /// Set the HardwareAddress address of the interface.
     ///
-    /// # Panics
-    /// This function panics if the address is not unicast, and if the medium is not Ethernet or
-    /// Ieee802154.
+    /// A non-unicast address is ignored, and if the medium is not Ethernet or Ieee802154 the
+    /// address is not updated.
     #[cfg(any(feature = "medium-ethernet", feature = "medium-ieee802154"))]
     pub fn set_hardware_addr(&mut self, addr: HardwareAddress) {
         #[cfg(all(feature = "medium-ethernet", not(feature = "medium-ieee802154")))]
@@ -312,8 +311,9 @@ impl Interface {
                 || self.inner.caps.medium == Medium::Ieee802154
         );
 
-        InterfaceInner::check_hardware_addr(&addr);
-        self.inner.hardware_addr = addr;
+        if InterfaceInner::check_hardware_addr(&addr) {
+            self.inner.hardware_addr = addr;
+        }
     }
 
     /// Get the IP addresses of the interface.
@@ -356,12 +356,11 @@ impl Interface {
 
     /// Update the IP addresses of the interface.
     ///
-    /// # Panics
-    /// This function panics if any of the addresses are not unicast.
+    /// Non-unicast (and non-unspecified) addresses are removed.
     pub fn update_ip_addrs<F: FnOnce(&mut Vec<IpCidr, IFACE_MAX_ADDR_COUNT>)>(&mut self, f: F) {
         f(&mut self.inner.ip_addrs);
         InterfaceInner::flush_neighbor_cache(&mut self.inner);
-        InterfaceInner::check_ip_addrs(&self.inner.ip_addrs);
+        InterfaceInner::retain_valid_ip_addrs(&mut self.inner.ip_addrs);
 
         #[cfg(all(
             feature = "proto-ipv6",
@@ -808,18 +807,12 @@ impl InterfaceInner {
     }
 
     #[cfg(any(feature = "medium-ethernet", feature = "medium-ieee802154"))]
-    fn check_hardware_addr(addr: &HardwareAddress) {
-        if !addr.is_unicast() {
-            panic!("Hardware address {addr} is not unicast")
-        }
+    fn check_hardware_addr(addr: &HardwareAddress) -> bool {
+        addr.is_unicast()
     }
 
-    fn check_ip_addrs(addrs: &[IpCidr]) {
-        for cidr in addrs {
-            if !cidr.address().is_unicast() && !cidr.address().is_unspecified() {
-                panic!("IP address {} is not unicast", cidr.address())
-            }
-        }
+    fn retain_valid_ip_addrs(addrs: &mut Vec<IpCidr, IFACE_MAX_ADDR_COUNT>) {
+        addrs.retain(|cidr| cidr.address().is_unicast() || cidr.address().is_unspecified());
     }
 
     /// Check whether the interface has the given IP address assigned.
@@ -1055,7 +1048,10 @@ impl InterfaceInner {
                     "address {} not in neighbor cache, sending ARP request",
                     dst_addr
                 );
-                let src_hardware_addr = self.hardware_addr.ethernet_or_panic();
+                let src_hardware_addr = match self.hardware_addr.ethernet() {
+                    Some(addr) => addr,
+                    None => return Err(DispatchError::NoRoute),
+                };
 
                 let arp_repr = ArpRepr::EthernetIpv4 {
                     operation: ArpOperation::Request,
@@ -1143,7 +1139,10 @@ impl InterfaceInner {
         if matches!(self.caps.medium, Medium::Ieee802154) {
             let (addr, tx_token) =
                 self.lookup_hardware_addr(tx_token, &ip_repr.dst_addr(), frag)?;
-            let addr = addr.ieee802154_or_panic();
+            let addr = match addr.ieee802154() {
+                Some(addr) => addr,
+                None => return Err(DispatchError::NoRoute),
+            };
 
             self.dispatch_ieee802154(addr, tx_token, meta, packet, frag);
             return Ok(());
@@ -1179,10 +1178,14 @@ impl InterfaceInner {
 
         // Emit function for the Ethernet header.
         #[cfg(feature = "medium-ethernet")]
+        let src_addr = match self.hardware_addr.ethernet() {
+            Some(addr) => addr,
+            None => return Err(DispatchError::NoRoute),
+        };
+        #[cfg(feature = "medium-ethernet")]
         let emit_ethernet = |repr: &IpRepr, tx_buffer: &mut [u8]| {
             let mut frame = EthernetFrame::new_unchecked(tx_buffer);
 
-            let src_addr = self.hardware_addr.ethernet_or_panic();
             frame.set_src_addr(src_addr);
             frame.set_dst_addr(dst_hardware_addr);
 
