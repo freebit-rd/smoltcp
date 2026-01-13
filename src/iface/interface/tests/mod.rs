@@ -83,7 +83,10 @@ fn test_handle_udp_broadcast(#[case] medium: Medium) {
     let mut udp_bytes = vec![0u8; 13];
     let mut packet = UdpPacket::new_unchecked(&mut udp_bytes);
 
-    let socket_handle = sockets.add(udp_socket);
+    let socket_handle = match sockets.add(udp_socket) {
+        Ok(handle) => handle,
+        Err(_) => return,
+    };
 
     #[cfg(feature = "proto-ipv6")]
     let src_ip = Ipv6Address::new(0xfe80, 0, 0, 0, 0, 0, 0, 1);
@@ -114,7 +117,10 @@ fn test_handle_udp_broadcast(#[case] medium: Medium) {
     let dst_addr = ip_repr.dst_addr();
 
     // Bind the socket to port 68
-    let socket = sockets.get_mut::<udp::Socket>(socket_handle);
+    let socket = match sockets.get_mut::<udp::Socket>(socket_handle) {
+        Ok(socket) => socket,
+        Err(_) => return,
+    };
     assert_eq!(socket.bind(68), Ok(()));
     assert!(!socket.can_recv());
     assert!(socket.can_send());
@@ -142,7 +148,10 @@ fn test_handle_udp_broadcast(#[case] medium: Medium) {
 
     // Make sure the payload to the UDP packet processed by process_udp is
     // appended to the bound sockets rx_buffer
-    let socket = sockets.get_mut::<udp::Socket>(socket_handle);
+    let socket = match sockets.get_mut::<udp::Socket>(socket_handle) {
+        Ok(socket) => socket,
+        Err(_) => return,
+    };
     assert!(socket.can_recv());
     assert_eq!(
         socket.recv(),

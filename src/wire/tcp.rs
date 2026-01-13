@@ -57,10 +57,8 @@ impl ops::Add<usize> for SeqNumber {
     type Output = SeqNumber;
 
     fn add(self, rhs: usize) -> SeqNumber {
-        if rhs > i32::MAX as usize {
-            panic!("attempt to add to sequence number with unsigned overflow")
-        }
-        SeqNumber(self.0.wrapping_add(rhs as i32))
+        let rhs = rhs as u32;
+        SeqNumber((self.0 as u32).wrapping_add(rhs) as i32)
     }
 }
 
@@ -68,10 +66,8 @@ impl ops::Sub<usize> for SeqNumber {
     type Output = SeqNumber;
 
     fn sub(self, rhs: usize) -> SeqNumber {
-        if rhs > i32::MAX as usize {
-            panic!("attempt to subtract to sequence number with unsigned overflow")
-        }
-        SeqNumber(self.0.wrapping_sub(rhs as i32))
+        let rhs = rhs as u32;
+        SeqNumber((self.0 as u32).wrapping_sub(rhs) as i32)
     }
 }
 
@@ -85,10 +81,7 @@ impl ops::Sub for SeqNumber {
     type Output = usize;
 
     fn sub(self, rhs: SeqNumber) -> usize {
-        let result = self.0.wrapping_sub(rhs.0);
-        if result < 0 {
-            panic!("attempt to subtract sequence numbers with underflow")
-        }
+        let result = (self.0 as u32).wrapping_sub(rhs.0 as u32);
         result as usize
     }
 }
@@ -779,10 +772,11 @@ impl<'a> TcpOption<'a> {
                             .filter(|s| s.is_some())
                             .enumerate()
                             .for_each(|(i, s)| {
-                                let (first, second) = *s.as_ref().unwrap();
-                                let pos = i * 8 + 2;
-                                NetworkEndian::write_u32(&mut buffer[pos..], first);
-                                NetworkEndian::write_u32(&mut buffer[pos + 4..], second);
+                                if let Some((first, second)) = s {
+                                    let pos = i * 8 + 2;
+                                    NetworkEndian::write_u32(&mut buffer[pos..], first);
+                                    NetworkEndian::write_u32(&mut buffer[pos + 4..], second);
+                                }
                             });
                     }
                     &TcpOption::TimeStamp { tsval, tsecr } => {
@@ -1333,9 +1327,8 @@ mod test {
             &SRC_ADDR.into(),
             &DST_ADDR.into(),
             &ChecksumCapabilities::default(),
-        )
-        .unwrap();
-        assert_eq!(repr, packet_repr());
+        );
+        assert_eq!(repr, Ok(packet_repr()));
     }
 
     #[test]

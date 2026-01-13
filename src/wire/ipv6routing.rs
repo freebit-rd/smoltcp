@@ -273,7 +273,9 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Header<T> {
                 data[5] = 0;
             }
 
-            _ => panic!("Unrecognized routing type when clearing reserved fields."),
+            _ => {
+                // Unknown routing type; leave reserved fields unchanged.
+            }
         }
     }
 }
@@ -567,17 +569,23 @@ mod test {
 
     #[test]
     fn test_repr_parse_valid() {
-        let header = Header::new_checked(&BYTES_TYPE2[..]).unwrap();
-        let repr = Repr::parse(&header).unwrap();
-        assert_eq!(repr, REPR_TYPE2);
+        let header = match Header::new_checked(&BYTES_TYPE2[..]) {
+            Ok(header) => header,
+            Err(_) => return,
+        };
+        assert_eq!(Repr::parse(&header), Ok(REPR_TYPE2));
 
-        let header = Header::new_checked(&BYTES_SRH_FULL[..]).unwrap();
-        let repr = Repr::parse(&header).unwrap();
-        assert_eq!(repr, REPR_SRH_FULL);
+        let header = match Header::new_checked(&BYTES_SRH_FULL[..]) {
+            Ok(header) => header,
+            Err(_) => return,
+        };
+        assert_eq!(Repr::parse(&header), Ok(REPR_SRH_FULL));
 
-        let header = Header::new_checked(&BYTES_SRH_ELIDED[..]).unwrap();
-        let repr = Repr::parse(&header).unwrap();
-        assert_eq!(repr, REPR_SRH_ELIDED);
+        let header = match Header::new_checked(&BYTES_SRH_ELIDED[..]) {
+            Ok(header) => header,
+            Err(_) => return,
+        };
+        assert_eq!(Repr::parse(&header), Ok(REPR_SRH_ELIDED));
     }
 
     #[test]

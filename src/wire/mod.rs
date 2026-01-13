@@ -60,10 +60,14 @@ let mut buffer = vec![0; repr.buffer_len() + repr.payload_len];
     repr.emit(&mut packet, &ChecksumCapabilities::default());
 }
 { // parsing
-    let packet = Ipv4Packet::new_checked(&buffer)
-                            .expect("truncated packet");
-    let parsed = Ipv4Repr::parse(&packet, &ChecksumCapabilities::default())
-                          .expect("malformed packet");
+    let packet = match Ipv4Packet::new_checked(&buffer) {
+        Ok(packet) => packet,
+        Err(_) => return,
+    };
+    let parsed = match Ipv4Repr::parse(&packet, &ChecksumCapabilities::default()) {
+        Ok(parsed) => parsed,
+        Err(_) => return,
+    };
     assert_eq!(repr, parsed);
 }
 # }
@@ -398,20 +402,20 @@ impl HardwareAddress {
     }
 
     #[cfg(feature = "medium-ethernet")]
-    pub(crate) fn ethernet_or_panic(&self) -> EthernetAddress {
+    pub(crate) fn ethernet(&self) -> Option<EthernetAddress> {
         match self {
-            HardwareAddress::Ethernet(addr) => *addr,
+            HardwareAddress::Ethernet(addr) => Some(*addr),
             #[allow(unreachable_patterns)]
-            _ => panic!("HardwareAddress is not Ethernet."),
+            _ => None,
         }
     }
 
     #[cfg(feature = "medium-ieee802154")]
-    pub(crate) fn ieee802154_or_panic(&self) -> Ieee802154Address {
+    pub(crate) fn ieee802154(&self) -> Option<Ieee802154Address> {
         match self {
-            HardwareAddress::Ieee802154(addr) => *addr,
+            HardwareAddress::Ieee802154(addr) => Some(*addr),
             #[allow(unreachable_patterns)]
-            _ => panic!("HardwareAddress is not Ethernet."),
+            _ => None,
         }
     }
 

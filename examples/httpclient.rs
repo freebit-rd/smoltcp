@@ -65,7 +65,10 @@ fn main() {
     let tcp_socket = tcp::Socket::new(tcp_rx_buffer, tcp_tx_buffer);
 
     let mut sockets = SocketSet::new(vec![]);
-    let tcp_handle = sockets.add(tcp_socket);
+    let tcp_handle = match sockets.add(tcp_socket) {
+        Ok(handle) => handle,
+        Err(_) => return,
+    };
 
     enum State {
         Connect,
@@ -78,7 +81,10 @@ fn main() {
         let timestamp = Instant::now();
         iface.poll(timestamp, &mut device, &mut sockets);
 
-        let socket = sockets.get_mut::<tcp::Socket>(tcp_handle);
+        let socket = match sockets.get_mut::<tcp::Socket>(tcp_handle) {
+            Ok(socket) => socket,
+            Err(_) => return,
+        };
         let cx = iface.context();
 
         state = match state {
