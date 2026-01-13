@@ -23,4 +23,4 @@ pub use self::interface::{
 };
 
 pub use self::route::{Route, RouteTableFull, Routes};
-pub use self::socket_set::{SocketHandle, SocketSet, SocketStorage};
+pub use self::socket_set::{SocketHandle, SocketSet, SocketSetError, SocketStorage};
