@@ -56,7 +56,7 @@ impl InterfaceInner {
     ) {
         let ll_src_a = match self.hardware_addr.ieee802154() {
             Some(addr) => addr,
-            None => return Ok(()),
+            None => return,
         };
 
         // Create the IEEE802.15.4 header.
