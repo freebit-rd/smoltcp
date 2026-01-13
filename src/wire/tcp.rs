@@ -774,8 +774,8 @@ impl<'a> TcpOption<'a> {
                             .for_each(|(i, s)| {
                                 if let Some((first, second)) = s {
                                     let pos = i * 8 + 2;
-                                    NetworkEndian::write_u32(&mut buffer[pos..], first);
-                                    NetworkEndian::write_u32(&mut buffer[pos + 4..], second);
+                                    NetworkEndian::write_u32(&mut buffer[pos..], *first);
+                                    NetworkEndian::write_u32(&mut buffer[pos + 4..], *second);
                                 }
                             });
                     }

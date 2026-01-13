@@ -38,8 +38,8 @@ impl InterfaceInner {
             None
         } else {
             // The packet wasn't handled by a socket, send a TCP RST packet.
-            let (ip, tcp) = tcp::Socket::rst_reply(&ip_repr, &tcp_repr);
-            Some(Packet::new(ip, IpPayload::Tcp(tcp)))
+            tcp::Socket::rst_reply(&ip_repr, &tcp_repr)
+                .map(|(ip, tcp)| Packet::new(ip, IpPayload::Tcp(tcp)))
         }
     }
 }
