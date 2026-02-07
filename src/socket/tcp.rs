@@ -23,6 +23,10 @@ macro_rules! tcp_trace {
     ($($arg:expr),*) => (net_log!(trace, $($arg),*));
 }
 
+macro_rules! tcp_info {
+    ($($arg:expr),*) => (net_log!(info, $($arg),*));
+}
+
 /// Error returned by [`Socket::listen`]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -539,6 +543,15 @@ pub struct Socket<'a> {
     /// 0 if not seen or timestamp not enabled
     last_remote_tsval: u32,
 
+    /// Last time we emitted the tx decision diagnostic log.
+    tx_decision_log_at: Option<Instant>,
+    /// Last time we emitted the ACK update diagnostic log.
+    ack_update_log_at: Option<Instant>,
+    /// Last time we emitted the retransmit diagnostic log.
+    retransmit_log_at: Option<Instant>,
+    /// Number of retransmit events observed since socket reset.
+    retransmit_count: u32,
+
     #[cfg(feature = "async")]
     rx_waker: WakerRegistration,
     #[cfg(feature = "async")]
@@ -607,6 +620,10 @@ impl<'a> Socket<'a> {
             nagle: true,
             tsval_generator: None,
             last_remote_tsval: 0,
+            tx_decision_log_at: None,
+            ack_update_log_at: None,
+            retransmit_log_at: None,
+            retransmit_count: 0,
             congestion_controller: congestion::AnyController::new(),
 
             #[cfg(feature = "async")]
@@ -928,6 +945,10 @@ impl<'a> Socket<'a> {
         self.remote_last_ts = None;
         self.ack_delay_timer = AckDelayTimer::Idle;
         self.challenge_ack_timer = Instant::from_secs(0);
+        self.tx_decision_log_at = None;
+        self.ack_update_log_at = None;
+        self.retransmit_log_at = None;
+        self.retransmit_count = 0;
 
         #[cfg(feature = "async")]
         {
@@ -1791,6 +1812,8 @@ impl<'a> Socket<'a> {
 
         // Compute the amount of acknowledged octets, removing the SYN and FIN bits
         // from the sequence space.
+        let old_remote_last_seq = self.remote_last_seq;
+        let old_remote_win_len = self.remote_win_len;
         let mut ack_len = 0;
         let mut ack_of_fin = false;
         let mut ack_all = false;
@@ -2105,6 +2128,20 @@ impl<'a> Socket<'a> {
             if self.remote_last_seq < self.local_seq_no {
                 self.remote_last_seq = self.local_seq_no
             }
+
+            let now = cx.now();
+            if Self::should_emit_periodic_log(&mut self.ack_update_log_at, now) {
+                tcp_info!(
+                    "tcp ack update: ack_number={} remote_last_seq={}=>{} remote_win_len={}=>{} srtt_ms={} rto_ms={}",
+                    ack_number,
+                    old_remote_last_seq,
+                    self.remote_last_seq,
+                    old_remote_win_len,
+                    self.remote_win_len,
+                    self.rtte.srtt,
+                    self.rtte.rto
+                );
+            }
         }
 
         // update last remote tsval
@@ -2236,6 +2273,75 @@ impl<'a> Socket<'a> {
             (Some(remote_last_ts), Some(timeout)) => timestamp >= remote_last_ts + timeout,
             (_, _) => false,
         }
+    }
+
+    fn should_emit_periodic_log(last_log_at: &mut Option<Instant>, now: Instant) -> bool {
+        match *last_log_at {
+            Some(last_log_at) if now < last_log_at + Duration::from_secs(1) => false,
+            _ => {
+                *last_log_at = Some(now);
+                true
+            }
+        }
+    }
+
+    fn log_tx_decision(&mut self, cx: &mut Context) {
+        let now = cx.now();
+        if !Self::should_emit_periodic_log(&mut self.tx_decision_log_at, now) {
+            return;
+        }
+
+        let Some(tuple) = self.tuple else {
+            return;
+        };
+
+        let ip_header_len = match tuple.local.addr {
+            #[cfg(feature = "proto-ipv4")]
+            IpAddress::Ipv4(_) => crate::wire::IPV4_HEADER_LEN,
+            #[cfg(feature = "proto-ipv6")]
+            IpAddress::Ipv6(_) => crate::wire::IPV6_HEADER_LEN,
+        };
+
+        let local_mss = cx.ip_mtu() - ip_header_len - TCP_HEADER_LEN;
+        let effective_mss = local_mss.min(self.remote_mss);
+        let data_in_flight = self.remote_last_seq != self.local_seq_no;
+
+        let max_send_seq =
+            self.local_seq_no + core::cmp::min(self.remote_win_len, self.tx_buffer.len());
+        let max_send = if max_send_seq >= self.remote_last_seq {
+            max_send_seq - self.remote_last_seq
+        } else {
+            0
+        };
+        let max_send = max_send.min(self.congestion_controller.inner().window());
+
+        let mut can_send = max_send != 0;
+        let can_send_full = max_send >= effective_mss;
+        let want_fin = matches!(self.state, State::FinWait1 | State::Closing | State::LastAck);
+        if self.nagle && data_in_flight && !can_send_full && !want_fin {
+            can_send = false;
+        }
+        let can_fin = want_fin && self.remote_last_seq == self.local_seq_no + self.tx_buffer.len();
+        let can_send_result =
+            (matches!(self.state, State::SynSent | State::SynReceived) && !data_in_flight)
+                || can_send
+                || can_fin;
+
+        tcp_info!(
+            "tcp tx decision: state={} remote_win_len={} remote_last_seq={} local_seq_no={} tx_len={} tx_cap={} remote_mss={} effective_mss={} max_send={} data_in_flight={} nagle={} can_send={}",
+            self.state,
+            self.remote_win_len,
+            self.remote_last_seq,
+            self.local_seq_no,
+            self.tx_buffer.len(),
+            self.tx_buffer.capacity(),
+            self.remote_mss,
+            effective_mss,
+            max_send,
+            data_in_flight,
+            self.nagle,
+            can_send_result
+        );
     }
 
     fn seq_to_transmit(&self, cx: &mut Context) -> bool {
@@ -2397,6 +2503,18 @@ impl<'a> Socket<'a> {
         } else if !self.seq_to_transmit(cx) && self.timer.should_retransmit(cx.now()) {
             // If a retransmit timer expired, we should resend data starting at the last ACK.
             net_debug!("retransmitting");
+            self.retransmit_count = self.retransmit_count.saturating_add(1);
+            let now = cx.now();
+            if Self::should_emit_periodic_log(&mut self.retransmit_log_at, now) {
+                net_info!(
+                    "tcp retransmit: count={} srtt_ms={} rto_ms={} remote_last_seq={} local_seq_no={}",
+                    self.retransmit_count,
+                    self.rtte.srtt,
+                    self.rtte.rto,
+                    self.remote_last_seq,
+                    self.local_seq_no
+                );
+            }
 
             // Rewind "last sequence number sent", as if we never
             // had sent them. This will cause all data in the queue
@@ -2424,6 +2542,7 @@ impl<'a> Socket<'a> {
         }
 
         // Decide whether we're sending a packet.
+        self.log_tx_decision(cx);
         if self.seq_to_transmit(cx) {
             // If we have data to transmit and it fits into partner's window, do it.
             tcp_trace!("outgoing segment will send data or flags");
