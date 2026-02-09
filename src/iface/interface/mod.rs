@@ -183,6 +183,11 @@ impl Config {
 }
 
 impl Interface {
+    // Maximum number of socket egress rounds performed by `poll_egress()` in one call.
+    // This improves throughput when sockets can produce multiple packets at once,
+    // while still keeping work per `poll_egress()` call bounded.
+    const POLL_EGRESS_ROUNDS: usize = 16;
+
     /// Create a network interface using the previously provided configuration.
     ///
     /// # Panics
@@ -657,105 +662,121 @@ impl Interface {
         }
 
         let mut result = PollResult::None;
-        for item in sockets.items_mut() {
-            if !item
-                .meta
-                .egress_permitted(self.inner.now, |ip_addr| self.inner.has_neighbor(&ip_addr))
-            {
-                continue;
-            }
+        for _ in 0..Interface::POLL_EGRESS_ROUNDS {
+            let mut progress = false;
+            let mut exhausted = false;
 
-            let mut neighbor_addr = None;
-            let mut respond = |inner: &mut InterfaceInner, meta: PacketMeta, response: Packet| {
-                neighbor_addr = Some(response.ip_repr().dst_addr());
-                let t = device.transmit(inner.now).ok_or_else(|| {
-                    net_debug!("failed to transmit IP: device exhausted");
-                    EgressError::Exhausted
-                })?;
-
-                inner
-                    .dispatch_ip(t, meta, response, &mut self.fragmenter)
-                    .map_err(|_| EgressError::Dispatch)?;
-
-                result = PollResult::SocketStateChanged;
-
-                Ok(())
-            };
-
-            let result = match &mut item.socket {
-                #[cfg(feature = "socket-raw")]
-                Socket::Raw(socket) => socket.dispatch(&mut self.inner, |inner, (ip, raw)| {
-                    respond(
-                        inner,
-                        PacketMeta::default(),
-                        Packet::new(ip, IpPayload::Raw(raw)),
-                    )
-                }),
-                #[cfg(feature = "socket-icmp")]
-                Socket::Icmp(socket) => {
-                    socket.dispatch(&mut self.inner, |inner, response| match response {
-                        #[cfg(feature = "proto-ipv4")]
-                        (IpRepr::Ipv4(ipv4_repr), IcmpRepr::Ipv4(icmpv4_repr)) => respond(
-                            inner,
-                            PacketMeta::default(),
-                            Packet::new_ipv4(ipv4_repr, IpPayload::Icmpv4(icmpv4_repr)),
-                        ),
-                        #[cfg(feature = "proto-ipv6")]
-                        (IpRepr::Ipv6(ipv6_repr), IcmpRepr::Ipv6(icmpv6_repr)) => respond(
-                            inner,
-                            PacketMeta::default(),
-                            Packet::new_ipv6(ipv6_repr, IpPayload::Icmpv6(icmpv6_repr)),
-                        ),
-                        #[allow(unreachable_patterns)]
-                        _ => unreachable!(),
-                    })
+            for item in sockets.items_mut() {
+                if !item
+                    .meta
+                    .egress_permitted(self.inner.now, |ip_addr| self.inner.has_neighbor(&ip_addr))
+                {
+                    continue;
                 }
-                #[cfg(feature = "socket-udp")]
-                Socket::Udp(socket) => {
-                    socket.dispatch(&mut self.inner, |inner, meta, (ip, udp, payload)| {
-                        respond(inner, meta, Packet::new(ip, IpPayload::Udp(udp, payload)))
-                    })
-                }
-                #[cfg(feature = "socket-tcp")]
-                Socket::Tcp(socket) => socket.dispatch(&mut self.inner, |inner, (ip, tcp)| {
-                    respond(
-                        inner,
-                        PacketMeta::default(),
-                        Packet::new(ip, IpPayload::Tcp(tcp)),
-                    )
-                }),
-                #[cfg(feature = "socket-dhcpv4")]
-                Socket::Dhcpv4(socket) => {
-                    socket.dispatch(&mut self.inner, |inner, (ip, udp, dhcp)| {
+
+                let mut neighbor_addr = None;
+                let mut respond =
+                    |inner: &mut InterfaceInner, meta: PacketMeta, response: Packet| {
+                        neighbor_addr = Some(response.ip_repr().dst_addr());
+                        let t = device.transmit(inner.now).ok_or_else(|| {
+                            net_debug!("failed to transmit IP: device exhausted");
+                            EgressError::Exhausted
+                        })?;
+
+                        inner
+                            .dispatch_ip(t, meta, response, &mut self.fragmenter)
+                            .map_err(|_| EgressError::Dispatch)?;
+
+                        result = PollResult::SocketStateChanged;
+                        progress = true;
+
+                        Ok(())
+                    };
+
+                let dispatch_result = match &mut item.socket {
+                    #[cfg(feature = "socket-raw")]
+                    Socket::Raw(socket) => socket.dispatch(&mut self.inner, |inner, (ip, raw)| {
                         respond(
                             inner,
                             PacketMeta::default(),
-                            Packet::new_ipv4(ip, IpPayload::Dhcpv4(udp, dhcp)),
+                            Packet::new(ip, IpPayload::Raw(raw)),
                         )
-                    })
-                }
-                #[cfg(feature = "socket-dns")]
-                Socket::Dns(socket) => socket.dispatch(&mut self.inner, |inner, (ip, udp, dns)| {
-                    respond(
-                        inner,
-                        PacketMeta::default(),
-                        Packet::new(ip, IpPayload::Udp(udp, dns)),
-                    )
-                }),
-            };
-
-            match result {
-                Err(EgressError::Exhausted) => break, // Device buffer full.
-                Err(EgressError::Dispatch) => {
-                    // `NeighborCache` already takes care of rate limiting the neighbor discovery
-                    // requests from the socket. However, without an additional rate limiting
-                    // mechanism, we would spin on every socket that has yet to discover its
-                    // neighbor.
-                    if let Some(neighbor_addr) = neighbor_addr {
-                        item.meta.neighbor_missing(self.inner.now, neighbor_addr);
+                    }),
+                    #[cfg(feature = "socket-icmp")]
+                    Socket::Icmp(socket) => {
+                        socket.dispatch(&mut self.inner, |inner, response| match response {
+                            #[cfg(feature = "proto-ipv4")]
+                            (IpRepr::Ipv4(ipv4_repr), IcmpRepr::Ipv4(icmpv4_repr)) => respond(
+                                inner,
+                                PacketMeta::default(),
+                                Packet::new_ipv4(ipv4_repr, IpPayload::Icmpv4(icmpv4_repr)),
+                            ),
+                            #[cfg(feature = "proto-ipv6")]
+                            (IpRepr::Ipv6(ipv6_repr), IcmpRepr::Ipv6(icmpv6_repr)) => respond(
+                                inner,
+                                PacketMeta::default(),
+                                Packet::new_ipv6(ipv6_repr, IpPayload::Icmpv6(icmpv6_repr)),
+                            ),
+                            #[allow(unreachable_patterns)]
+                            _ => unreachable!(),
+                        })
                     }
+                    #[cfg(feature = "socket-udp")]
+                    Socket::Udp(socket) => {
+                        socket.dispatch(&mut self.inner, |inner, meta, (ip, udp, payload)| {
+                            respond(inner, meta, Packet::new(ip, IpPayload::Udp(udp, payload)))
+                        })
+                    }
+                    #[cfg(feature = "socket-tcp")]
+                    Socket::Tcp(socket) => socket.dispatch(&mut self.inner, |inner, (ip, tcp)| {
+                        respond(
+                            inner,
+                            PacketMeta::default(),
+                            Packet::new(ip, IpPayload::Tcp(tcp)),
+                        )
+                    }),
+                    #[cfg(feature = "socket-dhcpv4")]
+                    Socket::Dhcpv4(socket) => {
+                        socket.dispatch(&mut self.inner, |inner, (ip, udp, dhcp)| {
+                            respond(
+                                inner,
+                                PacketMeta::default(),
+                                Packet::new_ipv4(ip, IpPayload::Dhcpv4(udp, dhcp)),
+                            )
+                        })
+                    }
+                    #[cfg(feature = "socket-dns")]
+                    Socket::Dns(socket) => {
+                        socket.dispatch(&mut self.inner, |inner, (ip, udp, dns)| {
+                            respond(
+                                inner,
+                                PacketMeta::default(),
+                                Packet::new(ip, IpPayload::Udp(udp, dns)),
+                            )
+                        })
+                    }
+                };
+
+                match dispatch_result {
+                    Err(EgressError::Exhausted) => {
+                        exhausted = true;
+                        break; // Device buffer full.
+                    }
+                    Err(EgressError::Dispatch) => {
+                        // `NeighborCache` already takes care of rate limiting the neighbor discovery
+                        // requests from the socket. However, without an additional rate limiting
+                        // mechanism, we would spin on every socket that has yet to discover its
+                        // neighbor.
+                        if let Some(neighbor_addr) = neighbor_addr {
+                            item.meta.neighbor_missing(self.inner.now, neighbor_addr);
+                        }
+                    }
+                    Ok(()) => {}
                 }
-                Ok(()) => {}
+            }
+
+            if exhausted || !progress {
+                break;
             }
         }
         result
