@@ -23,10 +23,6 @@ macro_rules! tcp_trace {
     ($($arg:expr),*) => (net_log!(trace, $($arg),*));
 }
 
-macro_rules! tcp_info {
-    ($($arg:expr),*) => (net_log!(info, $($arg),*));
-}
-
 /// Error returned by [`Socket::listen`]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -2131,7 +2127,7 @@ impl<'a> Socket<'a> {
 
             let now = cx.now();
             if Self::should_emit_periodic_log(&mut self.ack_update_log_at, now) {
-                tcp_info!(
+                tcp_trace!(
                     "tcp ack update: ack_number={} remote_last_seq={}=>{} remote_win_len={}=>{} srtt_ms={} rto_ms={}",
                     ack_number,
                     old_remote_last_seq,
@@ -2317,17 +2313,20 @@ impl<'a> Socket<'a> {
 
         let mut can_send = max_send != 0;
         let can_send_full = max_send >= effective_mss;
-        let want_fin = matches!(self.state, State::FinWait1 | State::Closing | State::LastAck);
+        let want_fin = matches!(
+            self.state,
+            State::FinWait1 | State::Closing | State::LastAck
+        );
         if self.nagle && data_in_flight && !can_send_full && !want_fin {
             can_send = false;
         }
         let can_fin = want_fin && self.remote_last_seq == self.local_seq_no + self.tx_buffer.len();
-        let can_send_result =
-            (matches!(self.state, State::SynSent | State::SynReceived) && !data_in_flight)
-                || can_send
-                || can_fin;
+        let can_send_result = (matches!(self.state, State::SynSent | State::SynReceived)
+            && !data_in_flight)
+            || can_send
+            || can_fin;
 
-        tcp_info!(
+        tcp_trace!(
             "tcp tx decision: state={} remote_win_len={} remote_last_seq={} local_seq_no={} tx_len={} tx_cap={} remote_mss={} effective_mss={} max_send={} data_in_flight={} nagle={} can_send={}",
             self.state,
             self.remote_win_len,
